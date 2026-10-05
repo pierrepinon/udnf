@@ -1,0 +1,119 @@
+# CI for udnf. Hardening:
+# - no token permissions by default; jobs only get `contents: read`;
+# - third-party code pinned: actions by full commit SHA, the Fedora image by digest
+#   (Dependabot proposes updates for the actions, see .github/dependabot.yml);
+# - only `push` / `pull_request` triggers (never `pull_request_target`), no secrets used;
+# - checkout does not keep the token in .git/config; every job has a timeout.
+# udnf links against libdnf5/librpm, so everything runs in the Fedora release it targets
+# (same base as .devcontainer/Containerfile). Update the image digest with:
+#   skopeo inspect --format '{{.Digest}}' docker://registry.fedoraproject.org/fedora:44
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Format, lint, unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    container:
+      image: registry.fedoraproject.org/fedora:44@sha256:7011f51bd8089d345be42d41f0aa3190d258823528852a5e7ec976fe2fd20f53
+    steps:
+      - name: Install build dependencies
+        run: >-
+          dnf -y --setopt=install_weak_deps=False install
+          cargo rust rustfmt clippy gcc-c++ pkgconf-pkg-config libdnf5-devel rpm-devel git-core findutils
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+
+  integration:
+    name: Integration tests (local test repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    container:
+      image: registry.fedoraproject.org/fedora:44@sha256:7011f51bd8089d345be42d41f0aa3190d258823528852a5e7ec976fe2fd20f53
+    steps:
+      - name: Install build dependencies
+        run: >-
+          dnf -y --setopt=install_weak_deps=False install
+          cargo rust rustfmt clippy gcc-c++ pkgconf-pkg-config libdnf5-devel rpm-devel git-core findutils
+          rpm-build createrepo_c gcc
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: cargo build --locked
+      # Builds RPM fixtures, serves them from a file:// repo and drives udnf with an isolated HOME.
+      - run: tests/integration.sh
+
+  plugin:
+    name: GNOME Software plugin
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    container:
+      image: registry.fedoraproject.org/fedora:44@sha256:7011f51bd8089d345be42d41f0aa3190d258823528852a5e7ec976fe2fd20f53
+    steps:
+      - name: Install build dependencies
+        run: dnf -y --setopt=install_weak_deps=False install gcc gnome-software-devel meson ninja-build
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: meson setup --werror build gnome-software-plugin
+      - run: meson compile -C build
+
+  rpm:
+    name: RPM packages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    needs: [rust, plugin]
+    permissions:
+      contents: read
+    container:
+      image: registry.fedoraproject.org/fedora:44@sha256:7011f51bd8089d345be42d41f0aa3190d258823528852a5e7ec976fe2fd20f53
+    steps:
+      - name: Install build dependencies
+        run: >-
+          dnf -y --setopt=install_weak_deps=False install
+          cargo rust rustfmt clippy gcc-c++ pkgconf-pkg-config libdnf5-devel rpm-devel git-core findutils
+          rpm-build gcc gnome-software-devel meson ninja-build tar xz
+          redhat-rpm-config rust-srpm-macros
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # SRPM with vendored crates + binary RPMs; %check runs the unit tests again.
+      - run: scripts/build-rpm.sh
+      - name: Check the packages have no scriptlets
+        run: |
+          for rpm in target/rpm/x86_64/udnf-*.rpm; do
+            if [ -n "$(rpm -qp --scripts "$rpm")" ]; then echo "::error::$rpm has scriptlets"; exit 1; fi
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: udnf-rpms
+          path: |
+            target/rpm/*.src.rpm
+            target/rpm/x86_64/*.rpm
+          if-no-files-found: error
+          retention-days: 14

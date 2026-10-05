@@ -1,0 +1,12 @@
+# Build environment for udnf. The binary links against the host's libdnf5/librpm,
+# so keep this on the same Fedora release as the host.
+FROM registry.fedoraproject.org/fedora:44
+
+RUN dnf -y install \
+        cargo rust rustfmt clippy rust-analyzer \
+        gcc-c++ pkgconf-pkg-config \
+        libdnf5-devel rpm-devel \
+        rpm-build createrepo_c \
+        gnome-software-devel meson ninja-build \
+        git \
+    && dnf clean all

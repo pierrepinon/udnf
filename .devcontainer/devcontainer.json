@@ -1,0 +1,22 @@
+{
+    "name": "udnf",
+    "build": {
+        "dockerfile": "Containerfile"
+    },
+    // Rootless podman: files created in the workspace keep the host user's ownership.
+    "runArgs": ["--userns=keep-id", "--security-opt", "label=disable"],
+    "containerUser": "${localEnv:USER}",
+    "remoteUser": "${localEnv:USER}",
+    "updateRemoteUserUID": false,
+    "workspaceMount": "source=${localWorkspaceFolder},target=${localWorkspaceFolder},type=bind",
+    "workspaceFolder": "${localWorkspaceFolder}",
+    "containerEnv": {
+        "HOME": "/tmp",
+        "CARGO_HOME": "${localWorkspaceFolder}/target/cargo-home"
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": ["rust-lang.rust-analyzer", "ms-vscode.cpptools"]
+        }
+    }
+}

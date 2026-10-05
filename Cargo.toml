@@ -1,0 +1,23 @@
+[package]
+name = "udnf"
+version = "0.1.0"
+edition = "2024"
+description = "User DNF: rootless userland package manager built on libdnf5"
+license = "GPL-2.0-or-later"
+repository = "https://github.com/pierrepinon/udnf"
+readme = "README.md"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+cxx = "1"
+dirs = "6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[build-dependencies]
+cxx-build = "1"
+pkg-config = "0.3"
+
+[dev-dependencies]
+tempfile = "3"
